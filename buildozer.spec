@@ -5,13 +5,13 @@ package.domain = org.dataconsumer
 source.dir = .
 source.include_exts = py,png,jpg,kv,atlas
 source.exclude_dirs = .git,.github,bin,.buildozer
-version = 1.0.0
-requirements = python3,kivy==2.3.0,pillow
+version = 1.1.0
+requirements = python3,kivy==2.3.0,android,certifi,openssl
 orientation = portrait
 fullscreen = 0
 android.permissions = INTERNET,ACCESS_NETWORK_STATE
-android.api = 33
-android.minapi = 21
+android.api = 35
+android.minapi = 24
 android.ndk = 25b
 android.archs = arm64-v8a
 android.allow_backup = True
