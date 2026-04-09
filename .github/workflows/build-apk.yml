@@ -9,49 +9,64 @@ jobs:
   build:
     runs-on: ubuntu-22.04
     timeout-minutes: 60
-    container:
-      image: kivy/buildozer:latest
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Build APK
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install system dependencies
         run: |
-          set -o pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            build-essential git zip unzip \
+            autoconf automake libtool pkg-config cmake \
+            zlib1g-dev libncurses5-dev libncursesw5-dev \
+            libffi-dev libssl-dev lld
+
+      - name: Install buildozer and cython
+        run: |
+          pip install --upgrade pip setuptools wheel
+          pip install buildozer==1.5.0 cython virtualenv
+
+      - name: Build APK (full clean build)
+        run: |
           export BUILDOZER_WARN_ON_ROOT=0
           echo "=== buildozer.spec ==="
           cat buildozer.spec
           echo ""
-          echo "=== Starting build ==="
-          yes | buildozer android debug 2>&1 | tee build.log
-          echo "=== EXIT CODE: $? ==="
-        timeout-minutes: 45
-
-      - name: Find APK
-        if: always()
-        run: |
-          echo "=== Searching for APK ==="
-          find / -name "*.apk" -type f 2>/dev/null || true
+          echo "=== Building ==="
+          buildozer android debug 2>&1 | tee build.log
+          RESULT=${PIPESTATUS[0]}
+          echo ""
+          echo "=== EXIT CODE: $RESULT ==="
+          echo "=== APK search ==="
+          find . -name "*.apk" -type f 2>/dev/null
           echo "=== bin/ ==="
-          ls -laR bin/ 2>/dev/null || echo "no bin/"
-          echo "=== Last 50 lines of log ==="
-          tail -50 build.log 2>/dev/null || true
-
-      - name: Collect APK
-        if: always()
-        run: |
-          mkdir -p apk_output
-          cp bin/*.apk apk_output/ 2>/dev/null || true
-          find / -name "dataconsumer*.apk" -exec cp {} apk_output/ \; 2>/dev/null || true
-          ls -la apk_output/
+          ls -la bin/ 2>/dev/null || echo "no bin/"
+          if [ $RESULT -ne 0 ]; then
+            echo "=== LAST 80 LINES OF LOG ==="
+            tail -80 build.log
+            exit 1
+          fi
+        timeout-minutes: 45
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
-        if: always()
+        if: success()
         with:
           name: DataConsumer-APK
-          path: apk_output/
+          path: bin/*.apk
           if-no-files-found: warn
           retention-days: 30
 
@@ -61,4 +76,5 @@ jobs:
         with:
           name: build-log
           path: build.log
+          if-no-files-found: warn
           retention-days: 7
