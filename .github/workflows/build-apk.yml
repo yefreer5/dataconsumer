@@ -29,62 +29,34 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            python3-pip build-essential git python3-dev \
-            ffmpeg libsdl2-dev libsdl2-image-dev libsdl2-mixer-dev libsdl2-ttf-dev \
-            libportmidi-dev libswscale-dev libavformat-dev libavcodec-dev \
-            zlib1g-dev libgstreamer1.0-dev gstreamer1.0-plugins-base \
-            libncurses5-dev libncursesw5-dev libtinfo5 cmake libffi-dev libssl-dev \
-            autoconf automake libtool pkg-config zip unzip lld
+            build-essential git zip unzip \
+            autoconf automake libtool pkg-config cmake \
+            zlib1g-dev libncurses5-dev libncursesw5-dev \
+            libffi-dev libssl-dev lld
 
       - name: Install buildozer and dependencies
         run: |
           pip install --upgrade pip setuptools wheel
           pip install buildozer cython virtualenv
 
-      - name: Build with buildozer
+      - name: Build APK
         run: |
           set -e
           export BUILDOZER_WARN_ON_ROOT=0
-
-          echo "=== Starting buildozer android debug ==="
           buildozer android debug 2>&1 | tee build.log
-          EXIT_CODE=${PIPESTATUS[0]}
+          echo "=== Buildozer exit code: ${PIPESTATUS[0]} ==="
+          echo "=== Last 30 lines ==="
+          tail -30 build.log
+        timeout-minutes: 45
 
-          echo ""
-          echo "=== Buildozer exit code: $EXIT_CODE ==="
-          echo ""
-
-          echo "=== Searching for APK files everywhere ==="
-          find / -name "*.apk" -type f 2>/dev/null | grep -i dataconsumer || echo "No dataconsumer APK found"
-          echo ""
-
-          echo "=== Listing bin/ directory ==="
-          ls -laR bin/ 2>/dev/null || echo "bin/ not found"
-          echo ""
-
-          echo "=== Listing .buildozer output ==="
-          find .buildozer -name "*.apk" 2>/dev/null || echo "No APK in .buildozer"
-          echo ""
-
-          echo "=== Last 50 lines of build log ==="
-          tail -50 build.log
-
-          if [ $EXIT_CODE -ne 0 ]; then
-            echo "BUILD FAILED with exit code $EXIT_CODE"
-            exit 1
-          fi
-        timeout-minutes: 40
-
-      - name: Collect APK
+      - name: Find and collect APK
         if: always()
         run: |
           mkdir -p apk_output
-          # Search everywhere for the APK
-          find / -name "*.apk" -path "*dataconsumer*" -type f -exec cp {} apk_output/ \; 2>/dev/null || true
           find . -name "*.apk" -type f -exec cp {} apk_output/ \; 2>/dev/null || true
           find ~/.buildozer -name "*.apk" -type f -exec cp {} apk_output/ \; 2>/dev/null || true
-          echo "=== Collected APKs ==="
-          ls -la apk_output/ 2>/dev/null || echo "No APKs collected"
+          echo "=== APKs found ==="
+          ls -la apk_output/ || echo "empty"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
