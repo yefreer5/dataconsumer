@@ -5,17 +5,25 @@ Muestra velocidad, consumo acumulado y permite definir un objetivo en MB o GB.
 """
 
 import os
-import ssl
 import threading
 import time
-import urllib.request
-import urllib.error
 
 try:
-    import certifi
-    SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
+    import ssl
+    import urllib.request
+    import urllib.error
+    _SSL_CONTEXT = ssl.create_default_context()
+    _SSL_CONTEXT.check_hostname = False
+    _SSL_CONTEXT.verify_mode = ssl.CERT_NONE
+
+    def _urlopen(req, timeout=20):
+        return urllib.request.urlopen(req, timeout=timeout, context=_SSL_CONTEXT)
 except Exception:
-    SSL_CONTEXT = ssl.create_default_context()
+    import urllib.request
+    import urllib.error
+
+    def _urlopen(req, timeout=20):
+        return urllib.request.urlopen(req, timeout=timeout)
 
 from kivy.app import App
 from kivy.uix.boxlayout import BoxLayout
@@ -263,7 +271,7 @@ class DataConsumerApp(App):
             try:
                 req = urllib.request.Request(url)
                 req.add_header("User-Agent", "Mozilla/5.0 (Linux; Android 12)")
-                resp = urllib.request.urlopen(req, timeout=20, context=SSL_CONTEXT)
+                resp = _urlopen(req, timeout=20)
                 while self.running and not self._reached_target():
                     chunk = resp.read(CHUNK_SIZE)
                     if not chunk:
@@ -285,7 +293,7 @@ class DataConsumerApp(App):
                 req = urllib.request.Request(url, data=random_block, method="POST")
                 req.add_header("User-Agent", "Mozilla/5.0 (Linux; Android 12)")
                 req.add_header("Content-Type", "application/octet-stream")
-                resp = urllib.request.urlopen(req, timeout=20, context=SSL_CONTEXT)
+                resp = _urlopen(req, timeout=20)
                 resp.read()
                 resp.close()
                 self._add_bytes(UPLOAD_BLOCK_SIZE)

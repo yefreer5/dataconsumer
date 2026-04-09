@@ -5,8 +5,9 @@ package.domain = org.dataconsumer
 source.dir = .
 source.include_exts = py,png,jpg,kv,atlas
 source.exclude_dirs = .git,.github,bin,.buildozer
-version = 1.1.0
-requirements = python3,kivy==2.3.0,android,certifi,openssl
+version = 1.2.0
+requirements = python3,kivy
+p4a.bootstrap = sdl2
 orientation = portrait
 fullscreen = 0
 android.permissions = INTERNET,ACCESS_NETWORK_STATE
