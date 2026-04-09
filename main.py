@@ -4,7 +4,6 @@ Lee datos en memoria y los descarta. Tambien sube datos para consumir en ambas d
 Muestra velocidad, consumo acumulado y permite definir un objetivo en MB o GB.
 """
 
-import io
 import os
 import threading
 import time
