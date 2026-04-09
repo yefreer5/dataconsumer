@@ -38,33 +38,43 @@ jobs:
           pip install --upgrade pip
           pip install buildozer cython virtualenv
 
-      - name: Cache buildozer
-        uses: actions/cache@v4
-        with:
-          path: |
-            .buildozer
-            ~/.buildozer
-          key: buildozer-v2-${{ hashFiles('buildozer.spec') }}
-          restore-keys: |
-            buildozer-v2-
-
       - name: Build APK
         run: |
           export BUILDOZER_WARN_ON_ROOT=0
           buildozer android debug 2>&1 | tee build.log
+          echo ""
+          echo "=== SEARCHING FOR APK FILES ==="
+          find . -name "*.apk" -type f 2>/dev/null
+          find ~/.buildozer -name "*.apk" -type f 2>/dev/null || true
+          echo ""
+          echo "=== BIN DIRECTORY ==="
+          ls -la bin/ 2>/dev/null || echo "bin/ does not exist"
+          echo ""
+          echo "=== BUILDOZER DIST OUTPUT ==="
+          find .buildozer -path "*/build/outputs/apk/*" -type f 2>/dev/null || true
         timeout-minutes: 35
+
+      - name: Collect APK from any location
+        if: always()
+        run: |
+          mkdir -p apk_output
+          find . -name "*.apk" -type f -exec cp {} apk_output/ \; 2>/dev/null
+          find ~/.buildozer -name "*.apk" -type f -exec cp {} apk_output/ \; 2>/dev/null || true
+          echo "=== APKs found ==="
+          ls -la apk_output/
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
-        if: success()
+        if: always()
         with:
           name: DataConsumer-APK
-          path: bin/*.apk
+          path: apk_output/*.apk
+          if-no-files-found: warn
           retention-days: 30
 
-      - name: Upload build log on failure
+      - name: Upload build log
         uses: actions/upload-artifact@v4
-        if: failure()
+        if: always()
         with:
           name: build-log
           path: build.log
