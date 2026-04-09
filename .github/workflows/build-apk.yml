@@ -9,54 +9,42 @@ jobs:
   build:
     runs-on: ubuntu-22.04
     timeout-minutes: 60
+    container:
+      image: kivy/buildozer:latest
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Set up Java 17
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '17'
-
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            build-essential git zip unzip \
-            autoconf automake libtool pkg-config cmake \
-            zlib1g-dev libncurses5-dev libncursesw5-dev \
-            libffi-dev libssl-dev lld
-
-      - name: Install buildozer and dependencies
-        run: |
-          pip install --upgrade pip setuptools wheel
-          pip install buildozer cython virtualenv
-
       - name: Build APK
         run: |
-          set -e
+          set -o pipefail
           export BUILDOZER_WARN_ON_ROOT=0
-          buildozer android debug 2>&1 | tee build.log
-          echo "=== Buildozer exit code: ${PIPESTATUS[0]} ==="
-          echo "=== Last 30 lines ==="
-          tail -30 build.log
+          echo "=== buildozer.spec ==="
+          cat buildozer.spec
+          echo ""
+          echo "=== Starting build ==="
+          yes | buildozer android debug 2>&1 | tee build.log
+          echo "=== EXIT CODE: $? ==="
         timeout-minutes: 45
 
-      - name: Find and collect APK
+      - name: Find APK
+        if: always()
+        run: |
+          echo "=== Searching for APK ==="
+          find / -name "*.apk" -type f 2>/dev/null || true
+          echo "=== bin/ ==="
+          ls -laR bin/ 2>/dev/null || echo "no bin/"
+          echo "=== Last 50 lines of log ==="
+          tail -50 build.log 2>/dev/null || true
+
+      - name: Collect APK
         if: always()
         run: |
           mkdir -p apk_output
-          find . -name "*.apk" -type f -exec cp {} apk_output/ \; 2>/dev/null || true
-          find ~/.buildozer -name "*.apk" -type f -exec cp {} apk_output/ \; 2>/dev/null || true
-          echo "=== APKs found ==="
-          ls -la apk_output/ || echo "empty"
+          cp bin/*.apk apk_output/ 2>/dev/null || true
+          find / -name "dataconsumer*.apk" -exec cp {} apk_output/ \; 2>/dev/null || true
+          ls -la apk_output/
 
       - name: Upload APK
         uses: actions/upload-artifact@v4

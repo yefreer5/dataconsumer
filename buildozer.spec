@@ -5,7 +5,7 @@ package.domain = org.dataconsumer
 source.dir = .
 source.include_exts = py,png,jpg,kv,atlas
 source.exclude_dirs = .git,.github,bin,.buildozer
-version = 2.0.1
+version = 2.1.0
 requirements = python3,kivy
 p4a.bootstrap = sdl2
 orientation = portrait
@@ -16,7 +16,6 @@ android.minapi = 21
 android.archs = arm64-v8a
 android.allow_backup = True
 android.accept_sdk_license = True
-p4a.branch = stable
 
 [buildozer]
 log_level = 2
