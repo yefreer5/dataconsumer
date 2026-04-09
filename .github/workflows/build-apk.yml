@@ -74,6 +74,11 @@ jobs:
             "platforms;android-33" \
             "platform-tools" > /dev/null 2>&1
 
+          # Crear symlink para que buildozer encuentre sdkmanager en la ruta vieja
+          mkdir -p "$SDK_ROOT/tools/bin"
+          ln -sf "$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" "$SDK_ROOT/tools/bin/sdkmanager"
+          ln -sf "$SDK_ROOT/cmdline-tools/latest/bin/avdmanager" "$SDK_ROOT/tools/bin/avdmanager"
+
           echo "Android SDK listo"
 
       - name: Build APK
