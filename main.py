@@ -1,29 +1,12 @@
 """
-Data Consumer - Consume datos moviles sin descargar archivos al dispositivo.
-Lee datos en memoria y los descarta. Tambien sube datos para consumir en ambas direcciones.
-Muestra velocidad, consumo acumulado y permite definir un objetivo en MB o GB.
+Data Consumer - Consume datos moviles sin descargar archivos.
+Descarga y sube datos en memoria para consumir datos moviles.
 """
 
 import os
 import threading
 import time
-
-try:
-    import ssl
-    import urllib.request
-    import urllib.error
-    _SSL_CONTEXT = ssl.create_default_context()
-    _SSL_CONTEXT.check_hostname = False
-    _SSL_CONTEXT.verify_mode = ssl.CERT_NONE
-
-    def _urlopen(req, timeout=20):
-        return urllib.request.urlopen(req, timeout=timeout, context=_SSL_CONTEXT)
-except Exception:
-    import urllib.request
-    import urllib.error
-
-    def _urlopen(req, timeout=20):
-        return urllib.request.urlopen(req, timeout=timeout)
+import urllib.request
 
 from kivy.app import App
 from kivy.uix.boxlayout import BoxLayout
@@ -36,304 +19,299 @@ from kivy.clock import Clock
 from kivy.core.window import Window
 from kivy.metrics import dp
 
+# URLs de speedtest publicos (HTTPS obligatorio en Android 9+)
 DOWNLOAD_URLS = [
-    "https://speedtest.tele2.net/100MB.zip",
-    "https://speedtest.tele2.net/10MB.zip",
-    "https://proof.ovh.net/files/100Mb.dat",
-    "https://proof.ovh.net/files/10Mb.dat",
-    "https://ipv4.download.thinkbroadband.com/100MB.zip",
-    "https://ipv4.download.thinkbroadband.com/10MB.zip",
+    "https://speed.hetzner.de/100MB.bin",
+    "https://speed.hetzner.de/10MB.bin",
+    "https://ash-speed.hetzner.com/100MB.bin",
+    "https://ash-speed.hetzner.com/10MB.bin",
 ]
 
-UPLOAD_URLS = [
-    "https://speedtest.tele2.net/upload.php",
-    "https://speed.hetzner.de/upload.php",
-]
+UPLOAD_URL = "https://speed.hetzner.de/upload.php"
 
-CHUNK_SIZE = 131072
-UPLOAD_BLOCK_SIZE = 1_048_576
+CHUNK = 65536
+UPLOAD_BLOCK = 524288
 
 
 class DataConsumerApp(App):
+
     def build(self):
         self.title = "Data Consumer"
-        self.total_bytes = 0
-        self.target_bytes = 0
+        self.total = 0
+        self.target = 0
         self.running = False
-        self.speed_bytes = 0
-        self.speed_tracker_bytes = 0
-        self.lock = threading.Lock()
+        self.speed = 0
+        self._speed_acc = 0
+        self._lock = threading.Lock()
 
         Window.clearcolor = (0.08, 0.08, 0.11, 1)
 
-        root = BoxLayout(orientation="vertical", padding=dp(16), spacing=dp(8))
+        root = BoxLayout(orientation="vertical", padding=dp(12), spacing=dp(6))
 
         root.add_widget(Label(
-            text="[b]DATA CONSUMER[/b]",
-            markup=True, font_size=dp(24),
-            size_hint_y=None, height=dp(40),
-            color=(0.3, 0.75, 1, 1),
-        ))
+            text="DATA CONSUMER", font_size=dp(22), bold=True,
+            size_hint_y=None, height=dp(36), color=(0.3, 0.75, 1, 1)))
 
         root.add_widget(Label(
-            text="Consume datos sin guardar archivos",
-            font_size=dp(12),
-            size_hint_y=None, height=dp(20),
-            color=(0.5, 0.5, 0.5, 1),
-        ))
+            text="Consume datos moviles", font_size=dp(12),
+            size_hint_y=None, height=dp(18), color=(0.5, 0.5, 0.5, 1)))
 
-        self.speed_label = Label(
-            text="0.00 Mbps",
-            font_size=dp(34), bold=True,
-            size_hint_y=None, height=dp(50),
-            color=(0.2, 0.95, 0.4, 1),
-        )
-        root.add_widget(self.speed_label)
+        self.lbl_speed = Label(
+            text="0.00 Mbps", font_size=dp(30), bold=True,
+            size_hint_y=None, height=dp(44), color=(0.2, 0.95, 0.4, 1))
+        root.add_widget(self.lbl_speed)
 
-        self.consumed_label = Label(
-            text="Consumido: 0.00 MB",
-            font_size=dp(20),
-            size_hint_y=None, height=dp(38),
-            color=(1, 1, 1, 1),
-        )
-        root.add_widget(self.consumed_label)
+        self.lbl_used = Label(
+            text="Consumido: 0.00 MB", font_size=dp(18),
+            size_hint_y=None, height=dp(32), color=(1, 1, 1, 1))
+        root.add_widget(self.lbl_used)
 
-        self.target_display = Label(
-            text="Objetivo: --",
-            font_size=dp(14),
-            size_hint_y=None, height=dp(25),
-            color=(0.6, 0.6, 0.6, 1),
-        )
-        root.add_widget(self.target_display)
+        self.lbl_target = Label(
+            text="Objetivo: --", font_size=dp(13),
+            size_hint_y=None, height=dp(22), color=(0.6, 0.6, 0.6, 1))
+        root.add_widget(self.lbl_target)
 
-        self.progress = ProgressBar(max=100, value=0, size_hint_y=None, height=dp(22))
-        root.add_widget(self.progress)
+        self.bar = ProgressBar(max=100, value=0, size_hint_y=None, height=dp(20))
+        root.add_widget(self.bar)
 
-        self.progress_label = Label(
-            text="0.0%", font_size=dp(13),
-            size_hint_y=None, height=dp(22),
-            color=(0.75, 0.75, 0.75, 1),
-        )
-        root.add_widget(self.progress_label)
+        self.lbl_pct = Label(
+            text="0 %", font_size=dp(12),
+            size_hint_y=None, height=dp(20), color=(0.7, 0.7, 0.7, 1))
+        root.add_widget(self.lbl_pct)
 
-        row1 = BoxLayout(orientation="horizontal", size_hint_y=None, height=dp(46), spacing=dp(8))
-        row1.add_widget(Label(text="Cantidad:", font_size=dp(15), size_hint_x=0.28, color=(0.8, 0.8, 0.8, 1)))
-        self.target_input = TextInput(
-            text="100", input_filter="float", font_size=dp(17),
+        # Cantidad
+        r1 = BoxLayout(size_hint_y=None, height=dp(44), spacing=dp(6))
+        r1.add_widget(Label(text="Cantidad:", font_size=dp(14),
+                            size_hint_x=0.3, color=(0.8, 0.8, 0.8, 1)))
+        self.inp = TextInput(
+            text="100", input_filter="float", font_size=dp(16),
             multiline=False, size_hint_x=0.35,
-            background_color=(0.16, 0.16, 0.2, 1),
-            foreground_color=(1, 1, 1, 1),
-            cursor_color=(0.3, 0.75, 1, 1),
-            padding=[dp(10), dp(8), 0, 0],
-        )
-        row1.add_widget(self.target_input)
-        self.unit_spinner = Spinner(
+            background_color=(0.15, 0.15, 0.2, 1),
+            foreground_color=(1, 1, 1, 1))
+        r1.add_widget(self.inp)
+        self.unit = Spinner(
             text="MB", values=("MB", "GB"),
-            font_size=dp(15), size_hint_x=0.37,
-            background_color=(0.2, 0.2, 0.26, 1), color=(1, 1, 1, 1),
-        )
-        row1.add_widget(self.unit_spinner)
-        root.add_widget(row1)
+            font_size=dp(14), size_hint_x=0.35,
+            background_color=(0.2, 0.2, 0.26, 1), color=(1, 1, 1, 1))
+        r1.add_widget(self.unit)
+        root.add_widget(r1)
 
-        row_mode = BoxLayout(orientation="horizontal", size_hint_y=None, height=dp(46), spacing=dp(8))
-        row_mode.add_widget(Label(text="Modo:", font_size=dp(15), size_hint_x=0.28, color=(0.8, 0.8, 0.8, 1)))
-        self.mode_spinner = Spinner(
-            text="Descarga + Subida", values=("Descarga + Subida", "Solo Descarga", "Solo Subida"),
-            font_size=dp(14), size_hint_x=0.72,
-            background_color=(0.2, 0.2, 0.26, 1), color=(1, 1, 1, 1),
-        )
-        row_mode.add_widget(self.mode_spinner)
-        root.add_widget(row_mode)
+        # Modo
+        r2 = BoxLayout(size_hint_y=None, height=dp(44), spacing=dp(6))
+        r2.add_widget(Label(text="Modo:", font_size=dp(14),
+                            size_hint_x=0.3, color=(0.8, 0.8, 0.8, 1)))
+        self.mode = Spinner(
+            text="Descarga", values=("Descarga", "Subida", "Ambos"),
+            font_size=dp(13), size_hint_x=0.7,
+            background_color=(0.2, 0.2, 0.26, 1), color=(1, 1, 1, 1))
+        r2.add_widget(self.mode)
+        root.add_widget(r2)
 
-        row2 = BoxLayout(orientation="horizontal", size_hint_y=None, height=dp(46), spacing=dp(8))
-        row2.add_widget(Label(text="Hilos:", font_size=dp(15), size_hint_x=0.28, color=(0.8, 0.8, 0.8, 1)))
-        self.threads_spinner = Spinner(
-            text="4", values=("1", "2", "3", "4", "6", "8", "10", "12"),
-            font_size=dp(15), size_hint_x=0.72,
-            background_color=(0.2, 0.2, 0.26, 1), color=(1, 1, 1, 1),
-        )
-        row2.add_widget(self.threads_spinner)
-        root.add_widget(row2)
+        # Hilos
+        r3 = BoxLayout(size_hint_y=None, height=dp(44), spacing=dp(6))
+        r3.add_widget(Label(text="Hilos:", font_size=dp(14),
+                            size_hint_x=0.3, color=(0.8, 0.8, 0.8, 1)))
+        self.threads = Spinner(
+            text="4", values=("1", "2", "3", "4", "6", "8"),
+            font_size=dp(14), size_hint_x=0.7,
+            background_color=(0.2, 0.2, 0.26, 1), color=(1, 1, 1, 1))
+        r3.add_widget(self.threads)
+        root.add_widget(r3)
 
-        btn_row = BoxLayout(orientation="horizontal", size_hint_y=None, height=dp(50), spacing=dp(10))
-        self.start_btn = Button(
-            text="INICIAR", font_size=dp(17),
+        # Botones
+        btns = BoxLayout(size_hint_y=None, height=dp(48), spacing=dp(8))
+        self.btn_start = Button(
+            text="INICIAR", font_size=dp(16),
             background_color=(0.1, 0.65, 0.25, 1), background_normal="",
-            color=(1, 1, 1, 1),
-        )
-        self.start_btn.bind(on_press=self.start_consuming)
-        btn_row.add_widget(self.start_btn)
+            color=(1, 1, 1, 1))
+        self.btn_start.bind(on_press=self.do_start)
+        btns.add_widget(self.btn_start)
 
-        self.stop_btn = Button(
-            text="DETENER", font_size=dp(17),
+        self.btn_stop = Button(
+            text="DETENER", font_size=dp(16),
             background_color=(0.7, 0.15, 0.15, 1), background_normal="",
-            color=(1, 1, 1, 1), disabled=True,
-        )
-        self.stop_btn.bind(on_press=self.stop_consuming)
-        btn_row.add_widget(self.stop_btn)
-        root.add_widget(btn_row)
+            color=(1, 1, 1, 1), disabled=True)
+        self.btn_stop.bind(on_press=self.do_stop)
+        btns.add_widget(self.btn_stop)
+        root.add_widget(btns)
 
-        self.reset_btn = Button(
-            text="REINICIAR CONTADOR", font_size=dp(13),
-            size_hint_y=None, height=dp(40),
+        self.btn_reset = Button(
+            text="REINICIAR", font_size=dp(13),
+            size_hint_y=None, height=dp(38),
             background_color=(0.3, 0.3, 0.35, 1), background_normal="",
-            color=(1, 1, 1, 1),
-        )
-        self.reset_btn.bind(on_press=self.reset_counter)
-        root.add_widget(self.reset_btn)
+            color=(1, 1, 1, 1))
+        self.btn_reset.bind(on_press=self.do_reset)
+        root.add_widget(self.btn_reset)
 
-        self.status_label = Label(
-            text="Listo", font_size=dp(12),
-            size_hint_y=None, height=dp(25),
-            color=(0.45, 0.45, 0.45, 1),
-        )
-        root.add_widget(self.status_label)
+        self.lbl_status = Label(
+            text="Listo", font_size=dp(11),
+            size_hint_y=None, height=dp(22), color=(0.45, 0.45, 0.45, 1))
+        root.add_widget(self.lbl_status)
 
         root.add_widget(Label(size_hint_y=1))
 
-        Clock.schedule_interval(self.update_ui, 0.5)
+        Clock.schedule_interval(self._tick, 0.5)
         return root
 
-    def fmt(self, nbytes):
-        if nbytes >= 1_073_741_824:
-            return f"{nbytes / 1_073_741_824:.2f} GB"
-        if nbytes >= 1_048_576:
-            return f"{nbytes / 1_048_576:.2f} MB"
-        if nbytes >= 1024:
-            return f"{nbytes / 1024:.2f} KB"
-        return f"{nbytes} B"
+    # -- helpers --
 
-    def _add_bytes(self, n):
-        with self.lock:
-            self.total_bytes += n
-            self.speed_tracker_bytes += n
+    @staticmethod
+    def _fmt(n):
+        if n >= 1073741824:
+            return "{:.2f} GB".format(n / 1073741824.0)
+        if n >= 1048576:
+            return "{:.2f} MB".format(n / 1048576.0)
+        if n >= 1024:
+            return "{:.2f} KB".format(n / 1024.0)
+        return "{} B".format(n)
 
-    def _reached_target(self):
-        return self.target_bytes > 0 and self.total_bytes >= self.target_bytes
+    def _add(self, n):
+        with self._lock:
+            self.total += n
+            self._speed_acc += n
 
-    def start_consuming(self, *_):
+    def _done(self):
+        return self.target > 0 and self.total >= self.target
+
+    # -- controls --
+
+    def do_start(self, *_a):
         try:
-            amount = float(self.target_input.text)
-        except ValueError:
-            self.status_label.text = "Escribe un numero valido"
+            amt = float(self.inp.text)
+        except Exception:
+            self.lbl_status.text = "Numero invalido"
             return
-        if amount <= 0:
-            self.status_label.text = "Debe ser mayor a 0"
+        if amt <= 0:
+            self.lbl_status.text = "Debe ser > 0"
             return
 
-        mult = 1_073_741_824 if self.unit_spinner.text == "GB" else 1_048_576
-        self.target_bytes = int(amount * mult)
-        self.target_display.text = f"Objetivo: {amount} {self.unit_spinner.text}"
+        mult = 1073741824 if self.unit.text == "GB" else 1048576
+        self.target = int(amt * mult)
+        self.lbl_target.text = "Objetivo: {} {}".format(amt, self.unit.text)
         self.running = True
 
-        for w in (self.start_btn, self.target_input, self.unit_spinner, self.threads_spinner, self.mode_spinner):
-            w.disabled = True
-        self.stop_btn.disabled = False
-        self.status_label.text = "Consumiendo datos..."
-        self.status_label.color = (0.3, 0.75, 1, 1)
+        self.btn_start.disabled = True
+        self.inp.disabled = True
+        self.unit.disabled = True
+        self.mode.disabled = True
+        self.threads.disabled = True
+        self.btn_stop.disabled = False
+        self.lbl_status.text = "Consumiendo..."
+        self.lbl_status.color = (0.3, 0.75, 1, 1)
 
-        n_threads = int(self.threads_spinner.text)
-        mode = self.mode_spinner.text
+        nt = int(self.threads.text)
+        m = self.mode.text
 
-        if mode in ("Descarga + Subida", "Solo Descarga"):
-            dl_threads = n_threads if mode == "Solo Descarga" else max(1, n_threads // 2)
-            for i in range(dl_threads):
-                threading.Thread(target=self._download_worker, args=(i,), daemon=True).start()
+        if m in ("Descarga", "Ambos"):
+            nd = nt if m == "Descarga" else max(1, nt // 2)
+            for i in range(nd):
+                t = threading.Thread(target=self._dl, args=(i,))
+                t.daemon = True
+                t.start()
 
-        if mode in ("Descarga + Subida", "Solo Subida"):
-            ul_threads = n_threads if mode == "Solo Subida" else max(1, n_threads - n_threads // 2)
-            for i in range(ul_threads):
-                threading.Thread(target=self._upload_worker, args=(i,), daemon=True).start()
+        if m in ("Subida", "Ambos"):
+            nu = nt if m == "Subida" else max(1, nt - nt // 2)
+            for i in range(nu):
+                t = threading.Thread(target=self._ul, args=(i,))
+                t.daemon = True
+                t.start()
 
-        threading.Thread(target=self._speed_loop, daemon=True).start()
+        t = threading.Thread(target=self._spd)
+        t.daemon = True
+        t.start()
 
-    def stop_consuming(self, *_):
+    def do_stop(self, *_a):
         self.running = False
-        for w in (self.start_btn, self.target_input, self.unit_spinner, self.threads_spinner, self.mode_spinner):
-            w.disabled = False
-        self.stop_btn.disabled = True
-        self.status_label.text = "Detenido"
-        self.status_label.color = (0.9, 0.6, 0.1, 1)
+        self.btn_start.disabled = False
+        self.inp.disabled = False
+        self.unit.disabled = False
+        self.mode.disabled = False
+        self.threads.disabled = False
+        self.btn_stop.disabled = True
+        self.lbl_status.text = "Detenido"
+        self.lbl_status.color = (0.9, 0.6, 0.1, 1)
 
-    def reset_counter(self, *_):
+    def do_reset(self, *_a):
         if not self.running:
-            with self.lock:
-                self.total_bytes = 0
-            self.progress.value = 0
-            self.progress_label.text = "0.0%"
-            self.consumed_label.text = "Consumido: 0.00 MB"
-            self.status_label.text = "Reiniciado"
+            with self._lock:
+                self.total = 0
+            self.bar.value = 0
+            self.lbl_pct.text = "0 %"
+            self.lbl_used.text = "Consumido: 0.00 MB"
+            self.lbl_status.text = "Reiniciado"
 
-    def _download_worker(self, tid):
+    # -- workers --
+
+    def _dl(self, tid):
         idx = tid % len(DOWNLOAD_URLS)
-        while self.running and not self._reached_target():
+        while self.running and not self._done():
             url = DOWNLOAD_URLS[idx]
             try:
                 req = urllib.request.Request(url)
-                req.add_header("User-Agent", "Mozilla/5.0 (Linux; Android 12)")
-                resp = _urlopen(req, timeout=20)
-                while self.running and not self._reached_target():
-                    chunk = resp.read(CHUNK_SIZE)
+                req.add_header("User-Agent", "DataConsumer/2.0")
+                resp = urllib.request.urlopen(req, timeout=15)
+                while self.running and not self._done():
+                    chunk = resp.read(CHUNK)
                     if not chunk:
                         break
-                    self._add_bytes(len(chunk))
-                    del chunk
+                    self._add(len(chunk))
                 resp.close()
             except Exception:
-                time.sleep(2)
+                pass
+            time.sleep(0.5)
             idx = (idx + 1) % len(DOWNLOAD_URLS)
-        self._check_done()
+        self._maybe_finish()
 
-    def _upload_worker(self, tid):
-        idx = tid % len(UPLOAD_URLS)
-        random_block = os.urandom(UPLOAD_BLOCK_SIZE)
-        while self.running and not self._reached_target():
-            url = UPLOAD_URLS[idx]
+    def _ul(self, tid):
+        block = os.urandom(UPLOAD_BLOCK)
+        while self.running and not self._done():
             try:
-                req = urllib.request.Request(url, data=random_block, method="POST")
-                req.add_header("User-Agent", "Mozilla/5.0 (Linux; Android 12)")
+                req = urllib.request.Request(UPLOAD_URL, data=block, method="POST")
+                req.add_header("User-Agent", "DataConsumer/2.0")
                 req.add_header("Content-Type", "application/octet-stream")
-                resp = _urlopen(req, timeout=20)
+                resp = urllib.request.urlopen(req, timeout=15)
                 resp.read()
                 resp.close()
-                self._add_bytes(UPLOAD_BLOCK_SIZE)
+                self._add(UPLOAD_BLOCK)
             except Exception:
-                time.sleep(2)
-            idx = (idx + 1) % len(UPLOAD_URLS)
-        self._check_done()
+                pass
+            time.sleep(0.5)
+        self._maybe_finish()
 
-    def _speed_loop(self):
+    def _spd(self):
         while self.running:
-            with self.lock:
-                self.speed_bytes = self.speed_tracker_bytes
-                self.speed_tracker_bytes = 0
+            with self._lock:
+                self.speed = self._speed_acc
+                self._speed_acc = 0
             time.sleep(1)
-        with self.lock:
-            self.speed_bytes = 0
+        with self._lock:
+            self.speed = 0
 
-    def _check_done(self):
-        if self._reached_target() and self.running:
-            Clock.schedule_once(lambda dt: self._on_target_reached())
+    def _maybe_finish(self):
+        if self._done() and self.running:
+            Clock.schedule_once(lambda dt: self._on_finish())
 
-    def _on_target_reached(self):
+    def _on_finish(self):
         if not self.running:
             return
-        self.stop_consuming()
-        self.status_label.text = "Objetivo alcanzado!"
-        self.status_label.color = (0.2, 0.95, 0.4, 1)
+        self.do_stop()
+        self.lbl_status.text = "Objetivo alcanzado!"
+        self.lbl_status.color = (0.2, 0.95, 0.4, 1)
 
-    def update_ui(self, _dt):
-        with self.lock:
-            total = self.total_bytes
-            speed = self.speed_bytes
+    # -- ui update --
 
-        self.consumed_label.text = f"Consumido: {self.fmt(total)}"
-        self.speed_label.text = f"{(speed * 8) / 1_000_000:.2f} Mbps"
+    def _tick(self, _dt):
+        with self._lock:
+            t = self.total
+            s = self.speed
 
-        if self.target_bytes > 0:
-            pct = min(100.0, (total / self.target_bytes) * 100)
-            self.progress.value = pct
-            self.progress_label.text = f"{pct:.1f}%"
+        self.lbl_used.text = "Consumido: {}".format(self._fmt(t))
+        self.lbl_speed.text = "{:.2f} Mbps".format((s * 8) / 1000000.0)
+
+        if self.target > 0:
+            p = min(100.0, (t / float(self.target)) * 100)
+            self.bar.value = p
+            self.lbl_pct.text = "{:.1f} %".format(p)
 
 
 if __name__ == "__main__":
